@@ -1,57 +1,26 @@
 # Parallel Firewall
 
-Acest proiect reprezintă o implementare în limbajul C a unui firewall 
-paralelizat. Scopul principal a fost transformarea unui 
-program cu execuție secvențială într-unul concurent, utilizând eficient 
-API-ul POSIX threads (`pthreads`). 
+This project represents a C implementation of a parallelized firewall. The main goal was to transform a program with sequential execution into a concurrent one, efficiently utilizing the POSIX threads API (`pthreads`). 
 
-Programul simulează comportamentul unui firewall real care primește pachete de 
-rețea, le analizează pe baza unor filtre predefinite și decide dacă le 
-acceptă (`PASS`) sau le respinge (`DROP`).
+The program simulates the behavior of a real firewall that receives network packets, analyzes them based on predefined filters, and decides whether to accept (`PASS`) or reject (`DROP`) them.
 
+## 📌 Architecture and Synchronization
 
+The application is built on a robust **Producer-Consumer** model, optimized to process packets efficiently and without unnecessarily consuming resources (no *busy waiting*).
 
-## 📌 Arhitectură și Sincronizare
+### 1. Producer
+A main thread is responsible for reading simulated network packets directly from an input file. Once read, it inserts the packets into a shared data structure, ensuring a constant flow of data for the consumers.
 
-Aplicația este construită pe un model robust de tip **Producer-Consumer**, 
-optimizat pentru a procesa pachetele eficient și fără a consuma resurse 
-inutil (fără *busy waiting*).
+### 2. Circular Buffer (Ring Buffer)
+To transfer data between the producer and consumers, I implemented a fixed-size Ring Buffer. This data structure acts as a FIFO queue.
+* **Synchronization:** Access to the buffer is protected by a mutex (`pthread_mutex_t`) to prevent race conditions.
+* **Notifications:** I used condition variables (`pthread_cond_t`) to put threads into a waiting state (`not_empty`, `not_full`). Thus, consumers are awakened only when new packets are available, completely eliminating the *busy waiting* phenomenon.
 
-### 1. Producătorul (Producer)
-Un thread principal are rolul de a citi pachetele de rețea simulate direct 
-dintr-un fișier de intrare. Odată citite, 
-acesta introduce pachetele într-o structură de date partajată, asigurând 
-un flux constant de date pentru consumatori.
+### 3. Consumers
+Consumers are multiple threads (between 1 and 32, configurable via the command line) that fetch packets from the Ring Buffer. To maximize performance, consumers extract packets in **batches**. Each packet is then evaluated by a filtering function that compares the source against a set of permitted IP ranges (`allowed_sources_range`).
 
-### 2. Buffer-ul Circular (Ring Buffer)
-Pentru a transfera datele între producător și consumatori, am implementat 
-un Ring Buffer (Buffer Circular) de dimensiune fixă. 
-Această structură acționează ca o coadă de tip FIFO. 
-* **Sincronizare:** Accesul la buffer este protejat de un mutex 
-  (`pthread_mutex_t`) pentru a preveni condițiile de cursă (race conditions) 
- .
-* **Notificări:** Am folosit variabile condiționale (`pthread_cond_t`) pentru 
-  a pune thread-urile în așteptare (`not_empty`, `not_full`). 
-  Astfel, consumatorii sunt treziți doar când există pachete noi, eliminând 
-  complet fenomenul de *busy waiting*.
-
-### 3. Consumatorii (Consumers)
-Consumatorii sunt thread-uri multiple (între 1 și 32, configurabile prin 
-linia de comandă) care preiau pachete din Ring Buffer. 
-Pentru a maximiza performanța, consumatorii extrag pachetele în **loturi** (batches). 
-Fiecare pachet este apoi evaluat de o funcție de filtrare care compară sursa 
-cu un set de intervale IP permise (`allowed_sources_range`).
-
-### 4. Sortarea și Scrierea Logurilor
-O cerință critică a temei a fost ca logurile finale să fie scrise în ordine 
-crescătoare, pe baza *timestamp-ului* fiecărui pachet, pe măsură ce acestea 
-sunt procesate. Deoarece thread-urile termină procesarea 
-într-o ordine nedeterministă, am implementat un mecanism de sortare locală:
-* **Min-Heap:** Consumatorii introduc logurile rezultate într-o structură 
-  de tip Min-Heap, sincronizată cu un mutex.
-* **Scriere controlată:** Odată ce numărul de elemente din heap depășește 
-  capacitatea alocată pentru reordonare, elementul cu cel mai mic timestamp 
-  este extras și scris într-un buffer local de ieșire.
-* **Flush:** Buffer-ul local scrie datele în fișierul final pe disc doar 
-  când se umple, reducând astfel apelurile de sistem costisitoare 
-  (`write`).
+### 4. Sorting and Writing Logs
+A critical requirement of the project was that the final logs must be written in ascending order based on each packet's *timestamp* as they are processed. Because the threads finish processing in a non-deterministic order, I implemented a local sorting mechanism:
+* **Min-Heap:** Consumers insert the resulting logs into a Min-Heap data structure, synchronized with a mutex.
+* **Controlled Writing:** Once the number of elements in the heap exceeds the allocated capacity for reordering, the element with the smallest timestamp is extracted and written to a local output buffer.
+* **Flush:** The local buffer writes the data to the final file on the disk only when it fills up, thereby reducing costly system calls (`write`).
